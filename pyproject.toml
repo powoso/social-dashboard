@@ -1,0 +1,19 @@
+[project]
+name = "social-dashboard"
+version = "0.1.0"
+description = "Social media scraping dashboard for Twitter, Reddit, and news sites"
+requires-python = ">=3.11"
+dependencies = [
+    "scrapling[all]>=0.2.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "jinja2>=3.1.4",
+    "sse-starlette>=2.1.0",
+    "sqlalchemy[asyncio]>=2.0.35",
+    "aiosqlite>=0.20.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "apscheduler>=3.11.0",
+    "python-dotenv>=1.0.0",
+    "structlog>=25.0.0",
+]

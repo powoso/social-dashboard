@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Social Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body x-data="dashboard()" x-init="init()" x-cloak class="min-h-screen">
+
+    <!-- ───── Top Navigation ───── -->
+    <nav class="sticky top-0 z-50 border-b" style="background:var(--bg-surface);border-color:var(--border-color)">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
+            <!-- Logo -->
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center text-lg font-bold" style="background:var(--accent)">S</div>
+                <span class="text-lg font-semibold tracking-tight">Social Dashboard</span>
+            </div>
+
+            <!-- Source Filter Tabs -->
+            <div class="hidden sm:flex items-center gap-1 rounded-lg p-1" style="background:var(--bg-primary)">
+                <template x-for="s in ['all','reddit','twitter','news']" :key="s">
+                    <button
+                        @click="sourceFilter = s; fetchPosts(); fetchTrends()"
+                        :class="sourceFilter === s ? 'text-white shadow' : 'text-slate-400 hover:text-slate-200'"
+                        :style="sourceFilter === s ? 'background:var(--bg-surface)' : ''"
+                        class="px-3 py-1.5 rounded-md text-sm font-medium capitalize transition-all"
+                        x-text="s === 'all' ? 'All Sources' : s"
+                    ></button>
+                </template>
+            </div>
+
+            <!-- Right side -->
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2 text-xs" style="color:var(--text-secondary)">
+                    <span class="live-dot" :class="sseConnected ? 'connected' : 'disconnected'"></span>
+                    <span x-text="sseConnected ? 'Live' : 'Reconnecting...'"></span>
+                </div>
+                <button @click="fetchAll()" class="text-xs px-3 py-1.5 rounded-md border transition-colors hover:border-blue-500"
+                        style="border-color:var(--border-color);color:var(--text-secondary)">
+                    Refresh
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- ───── Main Content ───── -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+
+        <!-- Search Bar -->
+        <div class="relative">
+            <input type="text" x-model.debounce.400ms="searchQuery"
+                   @input="fetchPosts()"
+                   placeholder="Search posts, headlines, topics..."
+                   class="w-full px-4 py-3 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 placeholder-slate-500"
+                   style="background:var(--bg-surface);border:1px solid var(--border-color);color:var(--text-primary)">
+            <svg class="absolute right-4 top-3.5 w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+        </div>
+
+        <!-- ───── Stats Row ───── -->
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div class="stat-card">
+                <div class="text-xs font-medium mb-1" style="color:var(--text-secondary)">Total Posts</div>
+                <div class="text-2xl font-bold" x-text="formatNumber(stats.total_posts)">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="text-xs font-medium mb-1" style="color:var(--text-secondary)">Posts Today</div>
+                <div class="text-2xl font-bold" x-text="formatNumber(stats.posts_today)">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="text-xs font-medium mb-1" style="color:var(--text-secondary)">Avg Engagement</div>
+                <div class="text-2xl font-bold" x-text="stats.avg_engagement.toFixed(1)">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="text-xs font-medium mb-1" style="color:var(--text-secondary)">Active Sources</div>
+                <div class="text-2xl font-bold" x-text="activeSources()">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="text-xs font-medium mb-1" style="color:var(--text-secondary)">Trending Topics</div>
+                <div class="text-2xl font-bold" x-text="trends.length">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="text-xs font-medium mb-1" style="color:var(--text-secondary)">Last Scrape</div>
+                <div class="text-lg font-bold" x-text="runs.length ? timeAgo(runs[0].started_at) : 'N/A'">N/A</div>
+            </div>
+        </div>
+
+        <!-- ───── Activity Chart ───── -->
+        <div class="chart-container">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-sm font-semibold">Activity (Last 24h)</h2>
+                <div class="text-xs" style="color:var(--text-secondary)" x-text="lastUpdate ? 'Updated ' + lastUpdate : ''"></div>
+            </div>
+            <div style="height:240px;position:relative">
+                <canvas id="activityChart"></canvas>
+            </div>
+        </div>
+
+        <!-- ───── Two Column: Posts + Trends ───── -->
+        <div class="grid lg:grid-cols-3 gap-6">
+
+            <!-- Posts Feed (2/3 width) -->
+            <div class="lg:col-span-2 space-y-3">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-sm font-semibold">Recent Posts</h2>
+                    <span class="text-xs" style="color:var(--text-secondary)" x-text="posts.length + ' posts'"></span>
+                </div>
+
+                <template x-if="posts.length === 0 && !loading">
+                    <div class="text-center py-12" style="color:var(--text-secondary)">
+                        <p class="text-sm">No posts yet. Scrapers will populate data shortly...</p>
+                    </div>
+                </template>
+
+                <template x-for="post in posts" :key="post.id">
+                    <div class="post-row">
+                        <div class="flex items-start gap-3">
+                            <div class="flex-1 min-w-0">
+                                <!-- Source badge + author + time -->
+                                <div class="flex items-center gap-2 mb-1.5 flex-wrap">
+                                    <span class="source-badge" :class="post.source" x-text="post.source"></span>
+                                    <span class="text-xs font-medium" style="color:var(--text-secondary)" x-text="post.author"></span>
+                                    <template x-if="post.subreddit">
+                                        <span class="text-xs px-1.5 py-0.5 rounded" style="background:#1f2937;color:#fb923c"
+                                              x-text="'r/' + post.subreddit"></span>
+                                    </template>
+                                    <template x-if="post.category && post.source === 'news'">
+                                        <span class="text-xs px-1.5 py-0.5 rounded" style="background:#1f2937;color:#22c55e"
+                                              x-text="post.category"></span>
+                                    </template>
+                                    <span class="text-xs ml-auto" style="color:var(--text-secondary)" x-text="timeAgo(post.published_at)"></span>
+                                </div>
+                                <!-- Title -->
+                                <a :href="post.source_url" target="_blank" rel="noopener noreferrer"
+                                   class="text-sm font-medium hover:underline leading-snug block truncate"
+                                   style="color:var(--text-primary)"
+                                   x-text="post.title"></a>
+                                <!-- Body preview -->
+                                <template x-if="post.body && post.body.length > 5">
+                                    <p class="text-xs mt-1 line-clamp-2" style="color:var(--text-secondary)"
+                                       x-text="post.body.substring(0, 200)"></p>
+                                </template>
+                                <!-- Metrics -->
+                                <div class="flex items-center gap-4 mt-2">
+                                    <span class="text-xs flex items-center gap-1" style="color:var(--text-secondary)">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+                                        <span x-text="formatNumber(post.score)"></span>
+                                    </span>
+                                    <span class="text-xs flex items-center gap-1" style="color:var(--text-secondary)">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                                        <span x-text="formatNumber(post.num_comments)"></span>
+                                    </span>
+                                    <span class="text-xs" style="color:var(--accent)" x-text="'Engagement: ' + post.engagement_score.toFixed(0)"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Right Sidebar: Trends + Source Health -->
+            <div class="space-y-6 lg:sticky lg:top-20 lg:self-start">
+                <!-- Trending Topics -->
+                <div class="stat-card">
+                    <h2 class="text-sm font-semibold mb-3">Trending Topics</h2>
+                    <template x-if="trends.length === 0">
+                        <p class="text-xs" style="color:var(--text-secondary)">No trends detected yet...</p>
+                    </template>
+                    <div class="space-y-0">
+                        <template x-for="(trend, i) in trends" :key="trend.id">
+                            <div class="trend-item">
+                                <div class="flex items-center gap-2 min-w-0">
+                                    <span class="text-xs font-bold w-5 text-right flex-shrink-0" style="color:var(--text-secondary)" x-text="i + 1"></span>
+                                    <span class="text-sm font-medium truncate" x-text="trend.topic"></span>
+                                </div>
+                                <div class="flex items-center gap-2 flex-shrink-0">
+                                    <span class="source-badge text-xs" :class="trend.source" x-text="trend.source"></span>
+                                    <span class="text-xs tabular-nums" style="color:var(--text-secondary)" x-text="trend.mention_count + 'x'"></span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Source Health -->
+                <div class="stat-card">
+                    <h2 class="text-sm font-semibold mb-3">Source Health</h2>
+                    <div class="space-y-3">
+                        <template x-for="src in sourceStats" :key="src.source">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <div class="w-2 h-2 rounded-full"
+                                         :style="'background:' + (src.success_rate >= 80 ? '#22c55e' : src.success_rate >= 50 ? '#eab308' : '#ef4444')"></div>
+                                    <span class="text-sm font-medium capitalize" x-text="src.source"></span>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <span class="text-xs tabular-nums" style="color:var(--text-secondary)" x-text="src.total_items + ' items'"></span>
+                                    <button @click="triggerScrape(src.source)"
+                                            class="text-xs px-2 py-0.5 rounded border transition-colors hover:border-blue-500"
+                                            style="border-color:var(--border-color);color:var(--text-secondary)">
+                                        Run
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
+                        <template x-if="sourceStats.length === 0">
+                            <p class="text-xs" style="color:var(--text-secondary)">No scrape runs recorded yet...</p>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Recent Runs -->
+                <div class="stat-card">
+                    <h2 class="text-sm font-semibold mb-3">Recent Scrape Runs</h2>
+                    <div class="space-y-2">
+                        <template x-for="run in runs.slice(0, 8)" :key="run.id">
+                            <div class="flex items-center justify-between text-xs">
+                                <div class="flex items-center gap-2">
+                                    <div class="w-1.5 h-1.5 rounded-full"
+                                         :style="'background:' + (run.status === 'success' ? '#22c55e' : run.status === 'partial' ? '#eab308' : '#ef4444')"></div>
+                                    <span class="capitalize font-medium" x-text="run.source"></span>
+                                </div>
+                                <div class="flex items-center gap-2" style="color:var(--text-secondary)">
+                                    <span x-text="run.items_new + ' new'"></span>
+                                    <span x-text="run.duration_seconds.toFixed(1) + 's'"></span>
+                                    <span x-text="timeAgo(run.started_at)"></span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- ───── Footer ───── -->
+    <footer class="max-w-7xl mx-auto px-4 sm:px-6 py-6 text-center text-xs" style="color:var(--text-secondary)">
+        Social Dashboard &mdash; Powered by <a href="https://github.com/D4Vinci/Scrapling" target="_blank" class="underline hover:text-white">Scrapling</a>
+    </footer>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
